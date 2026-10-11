@@ -15,6 +15,11 @@ export default function LoginPage() {
   const [agentUrl, setAgentUrlState] = useState("");
   const [showAgentSettings, setShowAgentSettings] = useState(false);
   const [agentSaved, setAgentSaved] = useState(false);
+  const [pingStatus, setPingStatus] = useState<string | null>(null);
+  const [pinging, setPinging] = useState(false);
+
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+  const isHttpTarget = !!agentUrl && agentUrl.startsWith("http://");
 
   useEffect(() => {
     if (getToken()) {
@@ -27,6 +32,35 @@ export default function LoginPage() {
     setApiBase(agentUrl);
     setAgentSaved(true);
     setTimeout(() => setAgentSaved(false), 2000);
+  };
+
+  const handleTestConnection = async () => {
+    setPinging(true);
+    setPingStatus(null);
+    try {
+      const target = (agentUrl || getApiBase()).trim().replace(/\/$/, "");
+      const res = await fetch(`${target}/api/server/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        setPingStatus("ONLINE: Phone agent responded successfully!");
+      } else {
+        setPingStatus(`ERROR: Phone agent returned HTTP status ${res.status}`);
+      }
+    } catch (err: unknown) {
+      if (isHttps && isHttpTarget) {
+        setPingStatus(
+          "BLOCKED: Browser blocked insecure HTTP connection from HTTPS website. See solutions below."
+        );
+      } else {
+        setPingStatus(
+          "FAILED: Could not reach phone agent. Verify the agent is running in Termux."
+        );
+      }
+    } finally {
+      setPinging(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -209,20 +243,71 @@ export default function LoginPage() {
                     type="text"
                     value={agentUrl}
                     onChange={(e) => setAgentUrlState(e.target.value)}
-                    placeholder="http://192.168.1.5:8728"
+                    placeholder="http://192.168.1.9:8728"
                     className="input text-xs py-1.5 flex-1 font-mono"
                   />
                   <button
                     type="button"
                     onClick={handleSaveAgentUrl}
-                    className="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                    className="btn btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1"
                   >
                     {agentSaved ? <Check size={13} className="text-emerald-400" /> : "Save"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={pinging}
+                    className="btn btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1 text-amber-300"
+                  >
+                    {pinging ? <Loader2 size={12} className="animate-spin-slow" /> : "⚡ Test"}
+                  </button>
                 </div>
-                <div className="text-[0.68rem] text-zinc-400 space-y-1">
-                  <p>• <strong>From PC on same Wi-Fi:</strong> Run <code className="text-emerald-300">ifconfig</code> in Termux, enter <code className="text-emerald-300">http://&lt;phone-ip&gt;:8728</code></p>
-                  <p>• <strong>Over Internet:</strong> Enter your Cloudflare Tunnel URL</p>
+
+                {pingStatus && (
+                  <div
+                    className="p-2 rounded-lg text-[0.7rem]"
+                    style={{
+                      background: pingStatus.startsWith("ONLINE")
+                        ? "rgba(34, 197, 94, 0.12)"
+                        : "rgba(239, 68, 68, 0.15)",
+                      color: pingStatus.startsWith("ONLINE") ? "#4ade80" : "#fca5a5",
+                      border: `1px solid ${
+                        pingStatus.startsWith("ONLINE")
+                          ? "rgba(34, 197, 94, 0.3)"
+                          : "rgba(239, 68, 68, 0.3)"
+                      }`,
+                    }}
+                  >
+                    {pingStatus}
+                  </div>
+                )}
+
+                {isHttps && isHttpTarget && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[0.7rem] text-amber-200/90 space-y-1.5">
+                    <p className="font-semibold text-amber-300">
+                      ⚠️ Why is http://192.168.X.X blocked?
+                    </p>
+                    <p>
+                      Because <strong>kalisi.vercel.app</strong> is HTTPS, browsers block insecure HTTP requests.
+                    </p>
+                    <div className="pt-1 text-zinc-300 space-y-1">
+                      <p>
+                        <strong>Option 1 (Recommended):</strong> Run Cloudflare Tunnel in Termux:
+                      </p>
+                      <code className="block bg-black/60 p-1.5 rounded font-mono text-[0.68rem] text-emerald-300">
+                        pkg install cloudflared && cloudflared tunnel --url http://127.0.0.1:8728
+                      </code>
+                      <p>Then paste the provided <code>https://...trycloudflare.com</code> URL above.</p>
+                      <p className="pt-1">
+                        <strong>Option 2 (PC Browser Fix):</strong> Click 🔒 next to URL in browser → <strong>Site settings</strong> → change <strong>Insecure content</strong> to <strong>Allow</strong>, then reload.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-[0.68rem] text-zinc-400 space-y-1 pt-1 border-t border-zinc-800">
+                  <p>• <strong>From PC on Wi-Fi:</strong> Enter <code className="text-emerald-300">http://&lt;phone-ip&gt;:8728</code> (with Insecure Content allowed)</p>
+                  <p>• <strong>Over Internet:</strong> Enter your Cloudflare Tunnel HTTPS URL</p>
                   <p>• <strong>Direct Phone Browser:</strong> Use <code className="text-emerald-300">http://localhost:8728</code></p>
                 </div>
               </div>

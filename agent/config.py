@@ -91,7 +91,7 @@ class Settings(BaseSettings):
         default="", description="Bcrypt hash of admin password"
     )
     allowed_origins: str = Field(
-        default="https://panel.kalisiadudhamsmpseason2.in,http://localhost:3000",
+        default="https://kalisi.vercel.app,https://panel.kalisiadudhamsmpseason2.in,https://kalisiadudhamsmpseason2.in,http://localhost:3000,http://localhost:8728,http://127.0.0.1:3000,http://127.0.0.1:8728",
         description="Comma-separated allowed CORS origins",
     )
 
