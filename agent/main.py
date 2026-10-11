@@ -175,9 +175,11 @@ async def verify_token(user: str = Depends(get_current_user)):
 
 @app.get("/api/server/status")
 async def get_server_status(user: str = Depends(get_current_user)):
-    status_info = server_manager.get_status()
     health = await server_manager.check_health()
+    status_info = server_manager.get_status()
     metrics = metrics_collector.get_latest()
+    if not metrics or metrics.get("cpu_percent") is None:
+        metrics = await metrics_collector.collect_once()
 
     # Read server.properties for version info
     version_info = _get_version_info()

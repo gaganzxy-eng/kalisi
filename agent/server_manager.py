@@ -61,12 +61,14 @@ class ServerManager:
                     try:
                         info = proc.info
                         cmdline = info.get("cmdline") or []
-                        cmdline_str = " ".join(cmdline)
-                        if (
-                            "java" in (info.get("name") or "").lower()
-                            and settings.server_jar in cmdline_str
-                        ):
-                            return info["pid"]
+                        cmdline_str = " ".join(cmdline).lower()
+                        name_str = (info.get("name") or "").lower()
+                        if "java" in name_str or "java" in cmdline_str:
+                            if any(
+                                k in cmdline_str
+                                for k in [".jar", "paper", "minecraft", "spigot", "purpur", settings.server_jar.lower()]
+                            ):
+                                return info["pid"]
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
             except Exception:
@@ -79,8 +81,11 @@ class ServerManager:
                     if entry.isdigit():
                         try:
                             with open(f"/proc/{entry}/cmdline", "rb") as f:
-                                cmd = f.read().decode("utf-8", errors="ignore").replace("\x00", " ")
-                                if "java" in cmd.lower() and settings.server_jar in cmd:
+                                cmd = f.read().decode("utf-8", errors="ignore").replace("\x00", " ").lower()
+                                if "java" in cmd and any(
+                                    k in cmd
+                                    for k in [".jar", "paper", "minecraft", "spigot", "purpur", settings.server_jar.lower()]
+                                ):
                                     return int(entry)
                         except Exception:
                             continue
@@ -287,11 +292,39 @@ class ServerManager:
             return {"success": False, "error": str(e)}
 
     def get_logs(self, lines: int = 200) -> list[str]:
-        """Get recent log lines."""
-        return list(self.log_buffer)[-lines:]
+        """Get recent log lines from buffer or latest.log on disk."""
+        if len(self.log_buffer) > 0:
+            return list(self.log_buffer)[-lines:]
+
+        # Fallback to reading logs/latest.log from minecraft directory
+        for log_candidate in [
+            settings.minecraft_path / "logs" / "latest.log",
+            Path.home() / "minecraft-server" / "logs" / "latest.log",
+            Path.home() / "minecraft" / "logs" / "latest.log",
+            Path.home() / "server" / "logs" / "latest.log",
+        ]:
+            if log_candidate.exists() and log_candidate.is_file():
+                try:
+                    with open(log_candidate, "r", encoding="utf-8", errors="ignore") as f:
+                        file_lines = [l.rstrip("\r\n") for l in f if l.strip()]
+                        if file_lines:
+                            for l in file_lines[-lines:]:
+                                self.log_buffer.append(l)
+                            return file_lines[-lines:]
+                except Exception:
+                    pass
+
+        return []
 
     def get_status(self) -> dict:
         """Get server status information."""
+        # Auto-detect if not currently marked running
+        if not self.pid or self.state == ServerState.STOPPED:
+            existing = self._detect_existing_process()
+            if existing:
+                self.pid = existing
+                self.state = ServerState.RUNNING
+
         uptime = None
         if self.start_time:
             delta = datetime.now(timezone.utc) - self.start_time

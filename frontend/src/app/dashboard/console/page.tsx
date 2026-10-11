@@ -36,42 +36,67 @@ export default function ConsolePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [connected, setConnected] = useState(false);
   const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const consoleRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch initial logs
-  useEffect(() => {
-    getConsoleLogs(500)
-      .then((data) => setLogs(data.logs))
-      .catch(() => {});
-  }, []);
+  const fetchLogs = useCallback(async (showToast = false) => {
+    try {
+      setRefreshing(true);
+      const data = await getConsoleLogs(500);
+      if (data?.logs?.length) {
+        setLogs(data.logs);
+      }
+      if (showToast) {
+        addToast("success", `Fetched ${data?.logs?.length || 0} log lines`);
+      }
+    } catch (e) {
+      if (showToast) {
+        addToast("error", "Failed to fetch logs from phone agent");
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [addToast]);
 
-  // WebSocket connection
+  // Initial and periodic polling fallback
+  useEffect(() => {
+    fetchLogs();
+    const interval = setInterval(() => {
+      // Keep pulling recent logs every 3 seconds if websocket is not active
+      fetchLogs();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [fetchLogs]);
+
+  // WebSocket connection for real-time push
   useEffect(() => {
     const connectWs = () => {
-      const ws = createConsoleWebSocket();
-      if (!ws) return;
+      try {
+        const ws = createConsoleWebSocket();
+        if (!ws) return;
 
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => {
+        ws.onopen = () => setConnected(true);
+        ws.onclose = () => {
+          setConnected(false);
+          setTimeout(connectWs, 5000);
+        };
+        ws.onerror = () => setConnected(false);
+        ws.onmessage = (event) => {
+          if (event.data) {
+            setLogs((prev) => {
+              const newLogs = [...prev, event.data];
+              if (newLogs.length > 2000) return newLogs.slice(-1500);
+              return newLogs;
+            });
+          }
+        };
+
+        wsRef.current = ws;
+      } catch {
         setConnected(false);
-        // Reconnect after 5 seconds
-        setTimeout(connectWs, 5000);
-      };
-      ws.onerror = () => setConnected(false);
-      ws.onmessage = (event) => {
-        if (event.data) {
-          setLogs((prev) => {
-            const newLogs = [...prev, event.data];
-            // Keep buffer manageable
-            if (newLogs.length > 2000) return newLogs.slice(-1500);
-            return newLogs;
-          });
-        }
-      };
-
-      wsRef.current = ws;
+      }
     };
 
     connectWs();
@@ -148,11 +173,11 @@ export default function ConsolePage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={connected ? "success" : "danger"}>
+          <Badge variant={connected ? "success" : "info"}>
             {connected ? (
-              <><Wifi size={12} className="mr-1" /> Live</>
+              <><Wifi size={12} className="mr-1" /> Live (WS)</>
             ) : (
-              <><WifiOff size={12} className="mr-1" /> Disconnected</>
+              <><RefreshCw size={12} className={`mr-1 ${refreshing ? "animate-spin-slow" : ""}`} /> Polling (HTTP)</>
             )}
           </Badge>
         </div>
@@ -181,6 +206,14 @@ export default function ConsolePage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => fetchLogs(true)}
+          disabled={refreshing}
+        >
+          <RefreshCw size={14} className={refreshing ? "animate-spin-slow" : ""} />
+          Refresh
+        </button>
         <button
           className="btn btn-secondary btn-sm"
           onClick={() => setAutoScroll(!autoScroll)}
