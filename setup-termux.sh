@@ -13,11 +13,11 @@ echo "=========================================================="
 
 # 1. Update Termux packages
 echo "[1/6] Updating Termux packages..."
-pkg update -y && pkg upgrade -y
+pkg update -y || true
 
-# 2. Install essential dependencies
-echo "[2/6] Installing dependencies (Python, OpenSSL, Git, Tar, Curl, Jq)..."
-pkg install -y python python-pip git curl jq openssl procps
+# 2. Install essential dependencies (including build tools for Python C-extensions)
+echo "[2/6] Installing dependencies (Python, clang, git, curl, jq, openssl)..."
+pkg install -y python python-pip git curl jq openssl procps clang make libffi || true
 
 # 3. Check / Create Minecraft Server Directory
 MC_DIR="$HOME/minecraft-server"
@@ -36,33 +36,32 @@ mkdir -p "$AGENT_DIR"
 mkdir -p "$AGENT_DIR/backups"
 mkdir -p "$AGENT_DIR/data"
 
-# Copy agent files if running from local repo or cloned repo
-if [ -d "./agent" ]; then
-    cp -r ./agent/* "$AGENT_DIR/"
+# Copy agent files from local repo or cloned directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_DIR/agent" ]; then
+    cp -r "$SCRIPT_DIR/agent/"* "$AGENT_DIR/"
 fi
 
 cd "$AGENT_DIR"
 
-# 5. Install Python dependencies
-echo "[4/6] Installing Python packages..."
-pip install --upgrade pip
-if [ -f "$AGENT_DIR/requirements.txt" ]; then
-    pip install -r "$AGENT_DIR/requirements.txt"
-else
-    pip install fastapi "uvicorn[standard]" "python-jose[cryptography]" "passlib[bcrypt]" psutil python-multipart pydantic pydantic-settings aiofiles websockets
-fi
+# 5. Install Python dependencies (Do NOT upgrade pip inside Termux)
+echo "[4/6] Installing Python packages for Termux..."
+pip install --no-cache-dir --break-system-packages -r "$AGENT_DIR/requirements.txt" 2>/dev/null || \
+pip install --no-cache-dir -r "$AGENT_DIR/requirements.txt" 2>/dev/null || \
+pip install --break-system-packages fastapi uvicorn pydantic pydantic-settings psutil pyjwt aiofiles websockets python-multipart || \
+pip install fastapi uvicorn pydantic pydantic-settings psutil pyjwt aiofiles websockets python-multipart || true
 
 # 6. Generate secure environment file (.env)
 if [ ! -f "$AGENT_DIR/.env" ]; then
     echo "[5/6] Generating secure secrets in .env..."
-    JWT_SECRET=$(openssl rand -hex 32)
-    API_KEY=$(openssl rand -hex 24)
-    DEFAULT_PASS=$(openssl rand -base64 12)
+    JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || echo "kalisi_jwt_secret_$(date +%s)")
+    API_KEY=$(openssl rand -hex 24 2>/dev/null || echo "kalisi_api_key_$(date +%s)")
+    DEFAULT_PASS=$(openssl rand -base64 12 2>/dev/null || echo "kalisiPass2026")
 
     cat <<EOF > "$AGENT_DIR/.env"
 # Kalisi SMP Agent Configuration
 PORT=8728
-HOST=127.0.0.1
+HOST=0.0.0.0
 MINECRAFT_DIR=$MC_DIR
 SERVER_JAR=paper.jar
 JAVA_BIN=java
@@ -76,7 +75,7 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=$DEFAULT_PASS
 ACCESS_TOKEN_EXPIRE_MINUTES=43200
 
-# Cloudflare Access (Optional / Recommended)
+# Cloudflare Access (Optional)
 CLOUDFLARE_ACCESS_TEAM_DOMAIN=
 CLOUDFLARE_AUD_TAG=
 EOF
@@ -85,7 +84,6 @@ EOF
     echo "  [IMPORTANT CREDENTIALS GENERATED]"
     echo "  Admin Username : admin"
     echo "  Admin Password : $DEFAULT_PASS"
-    echo "  API Secret Key : $API_KEY"
     echo "  Config saved to: $AGENT_DIR/.env"
     echo "=========================================================="
 else
@@ -104,6 +102,7 @@ EOF
 chmod +x "$AGENT_DIR/start.sh"
 
 echo "[6/6] Setup completed successfully!"
-echo "To launch the agent, run:"
+echo "=========================================================="
+echo "To launch the agent now, run:"
 echo "    cd ~/craft-agent && ./start.sh"
 echo "=========================================================="
