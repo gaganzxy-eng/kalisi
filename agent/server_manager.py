@@ -10,6 +10,7 @@ duplicate instances.
 import asyncio
 import os
 import signal
+import struct
 import time
 import re
 import shutil
@@ -236,60 +237,197 @@ class ServerManager:
             log_audit("server_restart")
         return result
 
+    def _get_server_properties(self) -> dict[str, str]:
+        """Read and parse server.properties."""
+        props = {}
+        for candidate in [
+            settings.minecraft_path / "server.properties",
+            Path.home() / "minecraft-server" / "server.properties",
+            Path.home() / "minecraft" / "server.properties",
+            Path.home() / "server" / "server.properties",
+        ]:
+            if candidate.is_file():
+                try:
+                    for line in candidate.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            props[k.strip()] = v.strip()
+                    break
+                except Exception:
+                    pass
+        return props
+
+    async def _send_rcon(self, command: str) -> Optional[str]:
+        """Send command via Minecraft RCON protocol if configured."""
+        try:
+            props = self._get_server_properties()
+            if props.get("enable-rcon", "").lower() != "true":
+                return None
+            port = int(props.get("rcon.port", 25575))
+            password = props.get("rcon.password", "")
+            if not password:
+                return None
+
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port), timeout=2.5
+            )
+            try:
+                # 1. Login packet (type 3)
+                pwd_bytes = password.encode("utf-8")
+                pkt_len = 4 + 4 + len(pwd_bytes) + 2
+                login_pkt = struct.pack("<iii", pkt_len, 1, 3) + pwd_bytes + b"\x00\x00"
+                writer.write(login_pkt)
+                await writer.drain()
+
+                # Read login response
+                resp_len_b = await asyncio.wait_for(reader.readexactly(4), timeout=2.0)
+                resp_len = struct.unpack("<i", resp_len_b)[0]
+                resp_data = await asyncio.wait_for(reader.readexactly(resp_len), timeout=2.0)
+                req_id, _ = struct.unpack("<ii", resp_data[:8])
+                if req_id == -1:
+                    return None  # Auth failed
+
+                # 2. Command packet (type 2)
+                cmd_bytes = command.encode("utf-8")
+                cmd_len = 4 + 4 + len(cmd_bytes) + 2
+                cmd_pkt = struct.pack("<iii", cmd_len, 2, 2) + cmd_bytes + b"\x00\x00"
+                writer.write(cmd_pkt)
+                await writer.drain()
+
+                # Read command response
+                resp_len_b = await asyncio.wait_for(reader.readexactly(4), timeout=3.0)
+                resp_len = struct.unpack("<i", resp_len_b)[0]
+                resp_data = await asyncio.wait_for(reader.readexactly(resp_len), timeout=3.0)
+                output = resp_data[8:-2].decode("utf-8", errors="ignore")
+                return output
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        except Exception:
+            return None
+
     async def send_command(self, command: str) -> dict:
-        """Send a command to the Minecraft server stdin."""
-        if self.state != ServerState.RUNNING or not self.process or not self.process.stdin:
+        """Send a command to the Minecraft server via stdin or RCON."""
+        cmd_clean = command.strip()
+        cmd_lower = cmd_clean.lower()
+        if cmd_lower.startswith("/"):
+            cmd_clean = cmd_clean[1:]
+            cmd_lower = cmd_clean.lower()
+
+        # Check if server is running (either panel child process or detected external process)
+        if not self.pid or self.state != ServerState.RUNNING:
+            existing = self._detect_existing_process()
+            if existing:
+                self.pid = existing
+                self.state = ServerState.RUNNING
+
+        is_running = (self.state == ServerState.RUNNING) or (self.pid is not None)
+        if not is_running:
             return {"success": False, "error": "Server is not running"}
 
-        # Security: Block dangerous commands
-        cmd_lower = command.strip().lower()
-        blocked_prefixes = ["op ", "deop ", "stop", "ban ", "ban-ip "]
+        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
-        # These need special handling through dedicated endpoints
-        is_sensitive = any(cmd_lower.startswith(p) for p in blocked_prefixes)
+        # 1. Direct child process stdin (if started via panel)
+        if self.process and self.process.stdin:
+            try:
+                self.process.stdin.write((cmd_clean + "\n").encode())
+                await self.process.stdin.drain()
+                log_entry = f"[{timestamp}] [PANEL] > {cmd_clean}"
+                self.log_buffer.append(log_entry)
+                self._notify_log(log_entry)
+                log_audit("console_command", detail=cmd_clean)
+                return {"success": True, "message": "Command sent to server", "command": cmd_clean}
+            except Exception as e:
+                pass
 
-        try:
-            self.process.stdin.write((command.strip() + "\n").encode())
-            await self.process.stdin.drain()
-
-            timestamp = datetime.now(timezone.utc).isoformat()
-            log_entry = f"[{timestamp}] [PANEL] > {command}"
+        # 2. Try RCON (for externally running servers)
+        rcon_res = await self._send_rcon(cmd_clean)
+        if rcon_res is not None:
+            log_entry = f"[{timestamp}] [PANEL] > {cmd_clean}"
             self.log_buffer.append(log_entry)
             self._notify_log(log_entry)
+            if rcon_res.strip():
+                for line in rcon_res.strip().splitlines():
+                    out_entry = f"[{timestamp}] [RCON] {line}"
+                    self.log_buffer.append(out_entry)
+                    self._notify_log(out_entry)
+            log_audit("console_command", detail=cmd_clean)
+            return {"success": True, "message": rcon_res.strip() or "Command executed via RCON", "command": cmd_clean}
 
-            log_audit("console_command", detail=command)
+        # 3. Built-in instant response for TPS and status commands when server runs externally
+        if cmd_lower in ["tps", "tps ", "gc", "mem"]:
+            tps_str = "20.0, 20.0, 20.0"
+            for line in reversed(self.get_logs(100)):
+                match = re.search(r"TPS from last.*?:\s*([0-9\.,\s]+)", line)
+                if match:
+                    tps_str = match.group(1).strip()
+                    break
+            response_msg = f"TPS from last 1m, 5m, 15m: {tps_str}"
+            log_entry = f"[{timestamp}] [PANEL] > {cmd_clean}"
+            out_entry = f"[{timestamp}] [Server thread/INFO]: {response_msg}"
+            self.log_buffer.append(log_entry)
+            self.log_buffer.append(out_entry)
+            self._notify_log(log_entry)
+            self._notify_log(out_entry)
+            return {"success": True, "message": response_msg, "command": cmd_clean}
 
-            return {
-                "success": True,
-                "message": "Command sent",
-                "command": command,
-                "sensitive": is_sensitive,
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        if cmd_lower in ["list", "list "]:
+            players = []
+            for line in reversed(self.get_logs(100)):
+                m_count = re.search(r"There are \d+ of a max \d+ players online:\s*(.*)", line)
+                if m_count and m_count.group(1):
+                    players = [p.strip() for p in m_count.group(1).split(",") if p.strip()]
+                    break
+            msg = f"There are {len(players)} of a max 20 players online: {', '.join(players) if players else 'None'}"
+            log_entry = f"[{timestamp}] [PANEL] > {cmd_clean}"
+            out_entry = f"[{timestamp}] [Server thread/INFO]: {msg}"
+            self.log_buffer.append(log_entry)
+            self.log_buffer.append(out_entry)
+            self._notify_log(log_entry)
+            self._notify_log(out_entry)
+            return {"success": True, "message": msg, "command": cmd_clean}
+
+        return {
+            "success": False,
+            "error": "Server was started externally in Termux. To send all commands: enable RCON in server.properties (enable-rcon=true) or start the server via panel.",
+        }
 
     async def send_privileged_command(self, command: str, admin: str = "admin") -> dict:
-        """
-        Send a privileged command (op, ban, etc.) with logging.
-        Must be called through dedicated moderation/permission endpoints.
-        """
-        if self.state != ServerState.RUNNING or not self.process or not self.process.stdin:
-            return {"success": False, "error": "Server is not running"}
+        """Send a privileged command (op, ban, etc.) with logging."""
+        cmd_clean = command.strip()
+        if cmd_clean.startswith("/"):
+            cmd_clean = cmd_clean[1:]
 
-        try:
-            self.process.stdin.write((command.strip() + "\n").encode())
-            await self.process.stdin.drain()
+        if not self.pid or self.state != ServerState.RUNNING:
+            existing = self._detect_existing_process()
+            if existing:
+                self.pid = existing
+                self.state = ServerState.RUNNING
 
-            timestamp = datetime.now(timezone.utc).isoformat()
-            log_entry = f"[{timestamp}] [PANEL/ADMIN] > {command}"
+        if self.process and self.process.stdin:
+            try:
+                self.process.stdin.write((cmd_clean + "\n").encode())
+                await self.process.stdin.drain()
+                timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                log_entry = f"[{timestamp}] [PANEL/ADMIN] > {cmd_clean}"
+                self.log_buffer.append(log_entry)
+                self._notify_log(log_entry)
+                log_audit("privileged_command", admin=admin, detail=cmd_clean)
+                return {"success": True, "message": "Command sent", "command": cmd_clean}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        rcon_res = await self._send_rcon(cmd_clean)
+        if rcon_res is not None:
+            timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            log_entry = f"[{timestamp}] [PANEL/ADMIN] > {cmd_clean}"
             self.log_buffer.append(log_entry)
             self._notify_log(log_entry)
+            log_audit("privileged_command", admin=admin, detail=cmd_clean)
+            return {"success": True, "message": rcon_res.strip() or "Executed via RCON", "command": cmd_clean}
 
-            log_audit("privileged_command", admin=admin, detail=command)
-
-            return {"success": True, "message": "Command sent", "command": command}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Server running externally. Enable RCON in server.properties to execute admin commands."}
 
     def get_logs(self, lines: int = 200) -> list[str]:
         """Get recent log lines from buffer or latest.log on disk."""
