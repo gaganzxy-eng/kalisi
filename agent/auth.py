@@ -4,12 +4,9 @@ Kalisi SMP Hosting Panel — Authentication Module
 Provides JWT-based authentication with bcrypt password hashing.
 Validates Cloudflare Access headers when configured.
 """
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-
 import hashlib
 import hmac
+import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -174,13 +171,16 @@ def authenticate_user(username: str, password: str) -> Optional[str]:
         log_audit("login_failure", admin=username, detail="Unknown user", result="failure")
         return None
 
-    if not settings.admin_password_hash:
-        # No password set — reject all logins
-        log_audit("login_failure", admin=username, detail="No password configured", result="failure")
-        return None
+    # Check password against hash, plain setting, or env var
+    valid = False
+    expected_plain = getattr(settings, "admin_password", None) or os.environ.get("ADMIN_PASSWORD") or os.environ.get("KALISI_ADMIN_PASSWORD")
+    if settings.admin_password_hash:
+        valid = verify_password(password, settings.admin_password_hash)
+    elif expected_plain:
+        valid = (password == expected_plain)
 
-    if not verify_password(password, settings.admin_password_hash):
-        log_audit("login_failure", admin=username, detail="Wrong password", result="failure")
+    if not valid:
+        log_audit("login_failure", admin=username, detail="Wrong password or none configured", result="failure")
         return None
 
     log_audit("login_success", admin=username)

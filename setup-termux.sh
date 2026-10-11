@@ -47,7 +47,7 @@ cd "$AGENT_DIR"
 # 5. Install Python dependencies (Do NOT upgrade pip inside Termux)
 echo "[4/6] Installing Python packages for Termux..."
 pip install --no-cache-dir --break-system-packages -r "$AGENT_DIR/requirements.txt" || \
-pip install --break-system-packages "pydantic>=1.10.20,<2.0.0" fastapi uvicorn pyjwt aiofiles websockets python-multipart requests httpx
+pip install --break-system-packages "pydantic>=1.10.20,<2.0.0" python-dotenv fastapi uvicorn pyjwt aiofiles websockets python-multipart requests httpx
 
 # 6. Generate secure environment file (.env)
 if [ ! -f "$AGENT_DIR/.env" ]; then
