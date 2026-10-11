@@ -48,8 +48,8 @@ cd "$AGENT_DIR"
 echo "[4/6] Installing Python packages for Termux..."
 pip install --no-cache-dir --break-system-packages -r "$AGENT_DIR/requirements.txt" 2>/dev/null || \
 pip install --no-cache-dir -r "$AGENT_DIR/requirements.txt" 2>/dev/null || \
-pip install --break-system-packages fastapi uvicorn pydantic pydantic-settings psutil pyjwt aiofiles websockets python-multipart || \
-pip install fastapi uvicorn pydantic pydantic-settings psutil pyjwt aiofiles websockets python-multipart || true
+pip install --break-system-packages fastapi uvicorn pydantic pydantic-settings pyjwt aiofiles websockets python-multipart requests httpx || \
+pip install fastapi uvicorn pydantic pydantic-settings pyjwt aiofiles websockets python-multipart requests httpx || true
 
 # 6. Generate secure environment file (.env)
 if [ ! -f "$AGENT_DIR/.env" ]; then

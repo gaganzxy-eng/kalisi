@@ -18,7 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from config import settings
 from database import log_audit, record_metrics
@@ -52,31 +55,36 @@ class ServerManager:
         Detect if a Minecraft server is already running on the configured port.
         Returns the PID if found, None otherwise.
         """
-        try:
-            for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-                try:
-                    info = proc.info
-                    cmdline = info.get("cmdline") or []
-                    cmdline_str = " ".join(cmdline)
-                    if (
-                        "java" in (info.get("name") or "").lower()
-                        and settings.server_jar in cmdline_str
-                    ):
-                        return info["pid"]
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        except Exception:
-            pass
+        if psutil:
+            try:
+                for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+                    try:
+                        info = proc.info
+                        cmdline = info.get("cmdline") or []
+                        cmdline_str = " ".join(cmdline)
+                        if (
+                            "java" in (info.get("name") or "").lower()
+                            and settings.server_jar in cmdline_str
+                        ):
+                            return info["pid"]
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            except Exception:
+                pass
 
-        # Also check port binding
+        # Native Linux / Android /proc inspection fallback
         try:
-            for conn in psutil.net_connections(kind="tcp"):
-                if (
-                    conn.laddr.port == settings.minecraft_port
-                    and conn.status == "LISTEN"
-                ):
-                    return conn.pid
-        except (psutil.AccessDenied, OSError):
+            if os.path.isdir("/proc"):
+                for entry in os.listdir("/proc"):
+                    if entry.isdigit():
+                        try:
+                            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                                cmd = f.read().decode("utf-8", errors="ignore").replace("\x00", " ")
+                                if "java" in cmd.lower() and settings.server_jar in cmd:
+                                    return int(entry)
+                        except Exception:
+                            continue
+        except Exception:
             pass
 
         return None
@@ -361,19 +369,44 @@ class ServerManager:
     async def check_health(self) -> dict:
         """Check if the server process is alive and healthy."""
         if self.pid:
-            try:
-                proc = psutil.Process(self.pid)
-                if proc.is_running():
-                    mem = proc.memory_info()
+            if psutil:
+                try:
+                    proc = psutil.Process(self.pid)
+                    if proc.is_running():
+                        mem = proc.memory_info()
+                        return {
+                            "healthy": True,
+                            "pid": self.pid,
+                            "cpu_percent": proc.cpu_percent(interval=0.5),
+                            "memory_mb": round(mem.rss / (1024 * 1024), 1),
+                            "status": proc.status(),
+                        }
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            else:
+                # Native Linux / Android process check without psutil
+                try:
+                    os.kill(self.pid, 0)
+                    memory_mb = None
+                    try:
+                        status_file = Path(f"/proc/{self.pid}/status")
+                        if status_file.exists():
+                            for line in status_file.read_text().splitlines():
+                                if line.startswith("VmRSS:"):
+                                    kb = int(line.split()[1])
+                                    memory_mb = round(kb / 1024, 1)
+                                    break
+                    except Exception:
+                        pass
                     return {
                         "healthy": True,
                         "pid": self.pid,
-                        "cpu_percent": proc.cpu_percent(interval=0.5),
-                        "memory_mb": round(mem.rss / (1024 * 1024), 1),
-                        "status": proc.status(),
+                        "cpu_percent": None,
+                        "memory_mb": memory_mb,
+                        "status": "running",
                     }
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+                except (OSError, ProcessLookupError):
+                    pass
 
         # Re-detect
         existing = self._detect_existing_process()
