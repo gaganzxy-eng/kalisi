@@ -5,7 +5,23 @@
  * Includes authentication, error handling, and retry logic.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8728";
+export function getApiBase(): string {
+  if (typeof window !== "undefined") {
+    const custom = localStorage.getItem("kalisi_agent_url");
+    if (custom) return custom.trim().replace(/\/$/, "");
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8728";
+}
+
+export function setApiBase(url: string) {
+  if (typeof window !== "undefined") {
+    if (!url) {
+      localStorage.removeItem("kalisi_agent_url");
+    } else {
+      localStorage.setItem("kalisi_agent_url", url.trim().replace(/\/$/, ""));
+    }
+  }
+}
 
 // ── Token Management ────────────────────────────────────
 
@@ -231,7 +247,7 @@ async function apiFetch<T>(
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+    const res = await fetch(`${getApiBase()}${endpoint}`, {
       ...options,
       headers,
       signal: controller.signal,
@@ -370,7 +386,7 @@ export function createConsoleWebSocket(): WebSocket | null {
   const token = getToken();
   if (!token) return null;
 
-  const wsUrl = API_BASE.replace(/^http/, "ws");
+  const wsUrl = getApiBase().replace(/^http/, "ws");
   return new WebSocket(`${wsUrl}/api/console/ws?token=${token}`);
 }
 
@@ -422,7 +438,7 @@ export async function uploadFile(path: string, file: File) {
 
 export async function downloadFile(path: string) {
   const token = getToken();
-  const res = await fetch(`${API_BASE}/api/files/download?path=${encodeURIComponent(path)}`, {
+  const res = await fetch(`${getApiBase()}/api/files/download?path=${encodeURIComponent(path)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error("Download failed");

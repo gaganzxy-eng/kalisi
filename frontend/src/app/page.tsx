@@ -34,24 +34,53 @@ export default function Home() {
     online: string[];
     count: number;
     max: number;
-    server_offline?: boolean;
+    is_online: boolean;
   }>({
-    online: ["KalisiKing", "ShadowCrafter", "DiamondMiner99"],
-    count: 3,
+    online: [],
+    count: 0,
     max: 20,
-    server_offline: false,
+    is_online: false,
   });
 
-  useEffect(() => {
-    getOnlinePlayers()
+  const updateServerStatus = () => {
+    fetch("https://api.mcsrvstat.us/3/fried-jarvis.tun.ply.gg", { cache: "no-store" })
+      .then((res) => res.json())
       .then((data) => {
-        if (data && data.count !== undefined) {
-          setPlayerData(data);
+        if (data && typeof data.online === "boolean") {
+          const isOnline = data.online;
+          const count = data.players?.online || 0;
+          const max = data.players?.max || 20;
+          const list = (data.players?.list || []).map((p: unknown) =>
+            typeof p === "string" ? p : (p as { name?: string })?.name || "Player"
+          );
+          setPlayerData({
+            online: list,
+            count: isOnline ? count : 0,
+            max: max,
+            is_online: isOnline,
+          });
         }
       })
       .catch(() => {
-        // Fallback to demo count
+        getOnlinePlayers()
+          .then((data) => {
+            if (data && data.count !== undefined) {
+              setPlayerData({
+                online: data.online || [],
+                count: data.count,
+                max: data.max || 20,
+                is_online: !data.server_offline,
+              });
+            }
+          })
+          .catch(() => {});
       });
+  };
+
+  useEffect(() => {
+    updateServerStatus();
+    const interval = setInterval(updateServerStatus, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleCopy = (text: string, id: string) => {
@@ -83,10 +112,14 @@ export default function Home() {
 
           <div className="flex items-center gap-3">
             {/* Live Player Pill in Header */}
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-mono ${
+              playerData.is_online
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
+                : "bg-zinc-800/60 border-zinc-700/40 text-zinc-400"
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${playerData.is_online ? "bg-emerald-400 animate-pulse" : "bg-zinc-500"}`} />
               <span>
-                {playerData.count} / {playerData.max} Players Online
+                {playerData.is_online ? `${playerData.count} / ${playerData.max} Players Online` : "Server Offline"}
               </span>
             </div>
 
@@ -157,16 +190,24 @@ export default function Home() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                      Live Server Status
+                    <span className={`w-2.5 h-2.5 rounded-full ${playerData.is_online ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+                    <span className={`text-xs font-semibold uppercase tracking-wider ${playerData.is_online ? "text-emerald-400" : "text-amber-400"}`}>
+                      {playerData.is_online ? "Live Server Online" : "Server Offline (Sleeping on Phone)"}
                     </span>
                   </div>
                   <div className="text-2xl sm:text-3xl font-black text-white mt-0.5">
-                    {playerData.count}{" "}
-                    <span className="text-base font-normal text-[var(--color-text-muted)]">
-                      / {playerData.max} Players Online
-                    </span>
+                    {playerData.is_online ? (
+                      <>
+                        {playerData.count}{" "}
+                        <span className="text-base font-normal text-[var(--color-text-muted)]">
+                          / {playerData.max} Players Online
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-lg sm:text-xl font-bold text-zinc-300">
+                        0 / {playerData.max} Players (Offline)
+                      </span>
+                    )}
                   </div>
                   {/* Player Avatars */}
                   {playerData.online.length > 0 && (

@@ -2,22 +2,32 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Sword, Eye, EyeOff, Loader2 } from "lucide-react";
-import { login, getToken } from "@/lib/api";
+import { Sword, Eye, EyeOff, Loader2, Settings, Wifi, Check } from "lucide-react";
+import { login, getToken, getApiBase, setApiBase } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [agentUrl, setAgentUrlState] = useState("");
+  const [showAgentSettings, setShowAgentSettings] = useState(false);
+  const [agentSaved, setAgentSaved] = useState(false);
 
   useEffect(() => {
     if (getToken()) {
       router.replace("/dashboard");
     }
+    setAgentUrlState(getApiBase());
   }, [router]);
+
+  const handleSaveAgentUrl = () => {
+    setApiBase(agentUrl);
+    setAgentSaved(true);
+    setTimeout(() => setAgentSaved(false), 2000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +44,7 @@ export default function LoginPage() {
       router.push("/dashboard");
     } catch (err: unknown) {
       setError((err as Error).message || "Login failed. Check your credentials.");
+      setShowAgentSettings(true); // Automatically expand settings to assist
     } finally {
       setLoading(false);
     }
@@ -85,14 +96,20 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div
-              className="p-3 rounded-lg text-sm"
+              className="p-3.5 rounded-xl text-xs space-y-1.5"
               style={{
                 background: "rgba(239, 68, 68, 0.1)",
-                border: "1px solid rgba(239, 68, 68, 0.2)",
-                color: "#ef4444",
+                border: "1px solid rgba(239, 68, 68, 0.25)",
+                color: "#f87171",
               }}
             >
-              {error}
+              <div className="font-semibold text-red-400">{error}</div>
+              <p className="text-[0.75rem] text-zinc-300">
+                Target: <code className="bg-black/40 px-1 py-0.5 rounded text-amber-300">{agentUrl || "http://localhost:8728"}</code>
+              </p>
+              <p className="text-[0.7rem] text-zinc-400">
+                If logging in from a PC, enter your phone's Wi-Fi IP (e.g. <code>http://192.168.1.X:8728</code>) or Cloudflare Tunnel URL below.
+              </p>
             </div>
           )}
 
@@ -106,7 +123,7 @@ export default function LoginPage() {
             <input
               type="text"
               className="input"
-              placeholder="admin"
+              placeholder="admin or Gagan"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
@@ -170,6 +187,47 @@ export default function LoginPage() {
           >
             <span>Explore in Demo / Preview Mode</span>
           </button>
+
+          {/* Agent Endpoint Config Accordion */}
+          <div className="pt-2 border-t border-zinc-800/60 mt-4">
+            <button
+              type="button"
+              onClick={() => setShowAgentSettings(!showAgentSettings)}
+              className="text-xs text-zinc-400 hover:text-emerald-400 flex items-center justify-center gap-1.5 w-full py-1 transition-colors"
+            >
+              <Settings size={13} />
+              <span>{showAgentSettings ? "Hide Agent Settings" : "⚙️ Change Phone Agent URL"}</span>
+            </button>
+
+            {showAgentSettings && (
+              <div className="mt-3 p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-left space-y-2.5 animate-fade-in">
+                <label className="block text-[0.7rem] font-semibold uppercase tracking-wider text-zinc-400">
+                  Phone Agent API Address
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={agentUrl}
+                    onChange={(e) => setAgentUrlState(e.target.value)}
+                    placeholder="http://192.168.1.5:8728"
+                    className="input text-xs py-1.5 flex-1 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveAgentUrl}
+                    className="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                  >
+                    {agentSaved ? <Check size={13} className="text-emerald-400" /> : "Save"}
+                  </button>
+                </div>
+                <div className="text-[0.68rem] text-zinc-400 space-y-1">
+                  <p>• <strong>From PC on same Wi-Fi:</strong> Run <code className="text-emerald-300">ifconfig</code> in Termux, enter <code className="text-emerald-300">http://&lt;phone-ip&gt;:8728</code></p>
+                  <p>• <strong>Over Internet:</strong> Enter your Cloudflare Tunnel URL</p>
+                  <p>• <strong>Direct Phone Browser:</strong> Use <code className="text-emerald-300">http://localhost:8728</code></p>
+                </div>
+              </div>
+            )}
+          </div>
         </form>
 
         <p
