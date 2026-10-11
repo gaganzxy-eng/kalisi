@@ -46,12 +46,8 @@ cd "$AGENT_DIR"
 
 # 5. Install Python dependencies (Do NOT upgrade pip inside Termux)
 echo "[4/6] Installing Python packages for Termux..."
-echo "--> Installing pre-built pydantic-core for Android (prevents Rust compilation)..."
-pip install --break-system-packages --extra-index-url https://eutalix.github.io/android-pydantic-core/ pydantic-core 2>/dev/null || \
-pip install --break-system-packages https://github.com/Eutalix/android-pydantic-core/releases/download/v2.46.3/pydantic_core-2.46.3-cp313-cp313-linux_aarch64.whl 2>/dev/null || true
-
-pip install --no-cache-dir --break-system-packages --extra-index-url https://eutalix.github.io/android-pydantic-core/ -r "$AGENT_DIR/requirements.txt" || \
-pip install --break-system-packages --extra-index-url https://eutalix.github.io/android-pydantic-core/ fastapi uvicorn pydantic pydantic-settings pyjwt aiofiles websockets python-multipart requests httpx
+pip install --no-cache-dir --break-system-packages -r "$AGENT_DIR/requirements.txt" || \
+pip install --break-system-packages "pydantic>=1.10.20,<2.0.0" fastapi uvicorn pyjwt aiofiles websockets python-multipart requests httpx
 
 # 6. Generate secure environment file (.env)
 if [ ! -f "$AGENT_DIR/.env" ]; then

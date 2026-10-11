@@ -4,7 +4,14 @@ Kalisi SMP Hosting Panel — Configuration
 import os
 import secrets
 from pathlib import Path
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    try:
+        from pydantic import BaseSettings
+    except ImportError:
+        BaseSettings = object
+
 from pydantic import Field
 
 
@@ -93,7 +100,12 @@ class Settings(BaseSettings):
     def server_jar_path(self) -> Path:
         return self.minecraft_path / self.server_jar
 
-    model_config = {"env_prefix": "KALISI_", "env_file": ".env"}
+    class Config:
+        env_prefix = "KALISI_"
+        env_file = ".env"
+        extra = "ignore"
+
+    model_config = {"env_prefix": "KALISI_", "env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()
