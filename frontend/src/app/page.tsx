@@ -195,20 +195,23 @@ export default function Home() {
               </div>
 
               {/* Right: Server Address Box with Copy Button */}
-              <div className="bg-[var(--color-bg-primary)]/80 border border-[var(--color-border-primary)] rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 w-full md:w-auto">
+              <div className="bg-[var(--color-bg-primary)]/80 border border-[var(--color-border-primary)] rounded-xl p-3 sm:p-4 flex items-center justify-between gap-4 w-full md:w-auto">
                 <div>
                   <span className="text-[0.65rem] uppercase font-semibold text-[var(--color-text-muted)] block">
-                    Server Address (Java 25565)
+                    Server Address (Playit.gg Java)
                   </span>
                   <span className="font-mono text-sm font-bold text-emerald-300">
-                    kalisiadudhamsmpseason2.in
+                    fried-jarvis.tun.ply.gg
+                  </span>
+                  <span className="text-[0.65rem] text-[var(--color-text-muted)] block mt-0.5">
+                    or kalisiadudhamsmpseason2.in
                   </span>
                 </div>
                 <button
                   onClick={() =>
-                    handleCopy("kalisiadudhamsmpseason2.in", "ip")
+                    handleCopy("fried-jarvis.tun.ply.gg", "ip")
                   }
-                  className="btn btn-secondary btn-sm flex items-center gap-1.5 text-xs py-1.5 px-3"
+                  className="btn btn-secondary btn-sm flex items-center gap-1.5 text-xs py-1.5 px-3 shrink-0"
                   title="Copy Server IP"
                 >
                   {copiedText === "ip" ? (
@@ -219,7 +222,7 @@ export default function Home() {
                   ) : (
                     <>
                       <Copy size={14} />
-                      Copy
+                      Copy IP
                     </>
                   )}
                 </button>
@@ -406,7 +409,7 @@ export default function Home() {
                     Start Playit.gg for Game Traffic
                   </h4>
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1 mb-3">
-                    Keep Playit.gg running in Termux so players can connect to port 25565:
+                    Keep Playit.gg running in Termux so players can connect to <strong className="text-amber-300 font-mono">fried-jarvis.tun.ply.gg</strong>:
                   </p>
                   <div className="bg-[var(--color-bg-primary)] p-3 rounded-xl border border-[var(--color-border-primary)] flex items-center justify-between">
                     <code className="text-xs font-mono text-amber-400">

@@ -560,7 +560,13 @@ export default function SettingsPage() {
             <p className="text-xs text-[var(--color-text-secondary)] mb-4">
               Your server uses Playit.gg for game traffic and Cloudflare Tunnel for panel management.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border-primary)]">
+                <span className="text-[var(--color-text-muted)] block">Playit.gg Server IP</span>
+                <span className="font-semibold text-emerald-400 font-mono">
+                  fried-jarvis.tun.ply.gg
+                </span>
+              </div>
               <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border-primary)]">
                 <span className="text-[var(--color-text-muted)] block">Domain Name</span>
                 <span className="font-semibold text-[var(--color-text-primary)]">
