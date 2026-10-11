@@ -1,0 +1,159 @@
+"""
+Kalisi SMP Hosting Panel — Authentication Module
+
+Provides JWT-based authentication with bcrypt password hashing.
+Validates Cloudflare Access headers when configured.
+"""
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
+
+from config import settings
+from database import log_audit
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer(auto_error=False)
+
+
+class TokenData(BaseModel):
+    username: str
+    exp: datetime
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+def create_access_token(username: str) -> tuple[str, int]:
+    expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    payload = {
+        "sub": username,
+        "exp": expires,
+        "iat": datetime.now(timezone.utc),
+        "type": "access",
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return token, settings.jwt_expire_minutes * 60
+
+
+def decode_token(token: str) -> Optional[TokenData]:
+    try:
+        payload = jwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
+        username = payload.get("sub")
+        exp = payload.get("exp")
+        if username is None:
+            return None
+        return TokenData(
+            username=username,
+            exp=datetime.fromtimestamp(exp, tz=timezone.utc),
+        )
+    except JWTError:
+        return None
+
+
+def validate_cf_access(request: Request) -> bool:
+    """
+    Validate Cloudflare Access JWT if configured.
+    Returns True if CF Access is not configured (passthrough)
+    or if the header is valid.
+    """
+    if not settings.cf_access_team or not settings.cf_access_aud:
+        return True
+
+    cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion")
+    if not cf_jwt:
+        return False
+
+    # In production, verify the CF Access JWT against
+    # https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
+    # For now, we check presence (full verification requires
+    # fetching CF public keys)
+    return True
+
+
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> str:
+    """
+    Authenticate the request. Checks:
+    1. Cloudflare Access header (if configured)
+    2. Bearer JWT token
+    """
+    # Check CF Access
+    if not validate_cf_access(request):
+        log_audit("auth_failure", detail="Invalid Cloudflare Access token",
+                  result="failure")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cloudflare Access validation failed",
+        )
+
+    # Check Bearer token
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token_data = decode_token(credentials.credentials)
+    if token_data is None:
+        log_audit("auth_failure", detail="Invalid JWT token", result="failure")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if token_data.exp < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return token_data.username
+
+
+def authenticate_user(username: str, password: str) -> Optional[str]:
+    """Verify credentials and return a token if valid."""
+    if username != settings.admin_username:
+        log_audit("login_failure", admin=username, detail="Unknown user", result="failure")
+        return None
+
+    if not settings.admin_password_hash:
+        # No password set — reject all logins
+        log_audit("login_failure", admin=username, detail="No password configured", result="failure")
+        return None
+
+    if not verify_password(password, settings.admin_password_hash):
+        log_audit("login_failure", admin=username, detail="Wrong password", result="failure")
+        return None
+
+    log_audit("login_success", admin=username)
+    token, _ = create_access_token(username)
+    return token

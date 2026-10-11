@@ -1,0 +1,23 @@
+# ==============================================================================
+# Cloudflare Tunnel Configuration (cloudflared)
+# Domain: kalisiadudhamsmpseason2.in
+# Target: Termux on OPPO Android Phone
+# ==============================================================================
+#
+# Place this file at ~/.cloudflared/config.yml inside Termux
+# Replace <TUNNEL_ID> with your actual Cloudflare Tunnel UUID
+
+tunnel: <TUNNEL_ID>
+credentials-file: /data/data/com.termux/files/home/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # 1. Phone Agent API & WebSockets (Proxied to FastAPI on port 8728)
+  # Subdomain option: api.kalisiadudhamsmpseason2.in
+  - hostname: api.kalisiadudhamsmpseason2.in
+    service: http://127.0.0.1:8728
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+
+  # 2. Catch-all rule (Required by Cloudflare)
+  - service: http_status:404
